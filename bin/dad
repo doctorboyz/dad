@@ -79,7 +79,7 @@ show_help() {
   echo -e "  dad <command> [args]"
   echo ""
   echo -e "${BOLD}Commands:${NC}"
-  echo -e "  ${CYAN}open${NC} <project>      Open project: tmux + Ollama + Claude --dangerously-skip-permissions"
+  echo -e "  ${CYAN}open${NC} <project>      Open project: tmux + Ollama + Claude (re-attaches if running)"
   echo -e "  ${CYAN}close${NC} <project>     Close project tmux session"
   echo -e "  ${CYAN}done${NC} [project]      Summarize session, save retrospective"
   echo -e "  ${CYAN}repair${NC} [project]    Diagnose and fix issues"
@@ -134,7 +134,8 @@ cmd_open() {
   start_ollama
 
   if tmux has-session -t "$project" 2>/dev/null; then
-    echo -e "${GREEN}✦ Attaching to existing session: ${BLUE}${project}${NC}"
+    echo -e "${GREEN}✦ Reconnecting to: ${BLUE}${project}${NC} (session already running)"
+    echo -e "${DIM}  Use dad close ${project} first to start fresh.${NC}"
     if [[ -n "${TMUX:-}" ]]; then
       tmux switch-client -t "$project"
     else
@@ -143,31 +144,37 @@ cmd_open() {
     return 0
   fi
 
+  # ── Fresh session: launch Ollama + Claude ────────────
   echo -e "${GREEN}✦ Waking up: ${BLUE}${project}${NC} → ${dir}"
   echo -e "${DIM}  Model: ${model}${NC}"
   echo -e "${DIM}  Ollama: running${NC}"
   echo ""
 
   # ── Create tmux session with 2 panes ─────────────────
-  # Pane 0: Claude Code (main)
-  # Pane 1: Ollama / shell (side)
+  # Pane 0: Claude Code (main, top ~70%)
+  # Pane 1: Shell / Ollama (bottom ~30%)
 
   tmux new-session -d -s "$project" -c "$dir"
 
-  # Split vertically: top = Claude, bottom = shell
-  tmux split-window -v -c "$dir"
+  # Split horizontally: main top, small bottom
+  # -l 30% = bottom pane gets 30% of height
+  tmux split-window -v -l 30\% -c "$dir"
 
-  # ── Launch Claude in pane 0 ──────────────────────────
-  # Claude Code with the selected model and dangerous permissions flag
-  tmux send-keys -t "$project:0.0" "claude --model ${model} --dangerously-skip-permissions" Enter
+  # ── Launch Claude in pane 0 (top, main) ──────────────
+  # -- separates Claude flags from dangerous permissions flag
+  tmux send-keys -t "$project:0.0" "claude --model ${model} -- --dangerously-skip-permissions" Enter
 
-  # ── Pane 1: show ollama status ──────────────────────
-  tmux send-keys -t "$project:0.1" "echo '✦ DAD — Dev Automation Daemon'" Enter
-  tmux send-keys -t "$project:0.1" "echo '✦ Project: ${project}'" Enter
-  tmux send-keys -t "$project:0.1" "echo '✦ Model: ${model}'" Enter
-  tmux send-keys -t "$project:0.1" "echo '✦ Ollama:' && ollama list 2>/dev/null | head -5 || echo '  not running'" Enter
+  # ── Pane 1 (bottom): status shell ────────────────────
+  tmux send-keys -t "$project:0.1" "clear" Enter
+  tmux send-keys -t "$project:0.1" "echo '╔══════════════════════════════════════════════╗'" Enter
+  tmux send-keys -t "$project:0.1" "echo '║  DAD — Dev Automation Daemon                 ║'" Enter
+  tmux send-keys -t "$project:0.1" "echo '║  Project: ${project}'" Enter
+  tmux send-keys -t "$project:0.1" "echo '║  Model: ${model}'" Enter
+  tmux send-keys -t "$project:0.1" "echo '╚══════════════════════════════════════════════╝'" Enter
   tmux send-keys -t "$project:0.1" "echo ''" Enter
-  tmux send-keys -t "$project:0.1" "echo 'Shell ready. Use dad commands or ollama here.'" Enter
+  tmux send-keys -t "$project:0.1" "ollama list 2>/dev/null || echo 'Ollama not running'" Enter
+  tmux send-keys -t "$project:0.1" "echo ''" Enter
+  tmux send-keys -t "$project:0.1" "echo 'Shell ready. dad <command> or ollama <command>.'" Enter
 
   # ── Select pane 0 (Claude) as active ────────────────
   tmux select-pane -t "$project:0.0"
