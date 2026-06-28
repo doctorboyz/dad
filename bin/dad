@@ -3,8 +3,6 @@
 # The father of the eternity family. Opens, closes, summarizes, repairs, communicates.
 # Usage: dad <command> [args]
 
-set -euo pipefail
-
 # ── Colors ──────────────────────────────────────────────
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -15,21 +13,25 @@ DIM='\033[2m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# ── Paths ─────────────────────────────────────────────────
+# ── Paths ────────────────────────────────────────────────
 DAD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DAD_SRC="$DAD_DIR/src"
-DAD_CONFIG="$DAD_DIR/config/projects.yaml"
 
-# ── Project registry ─────────────────────────────────────
-# Maps project names to their paths
-declare -A PROJECTS=(
-  [eternity]="/Users/mac/eternity"
-  [infra]="/Users/mac/infra"
-  [dad]="/Users/mac/dad"
-  [s45]="/Users/mac/Desktop/S45"
-  [deluna-crm]="/Users/mac/Desktop/deluna-crm"
-  [deluna-mini]="/Users/mac/deluna-mini"
-)
+# ── Project registry (bash 3.2 compatible — case/esac) ───
+project_path() {
+  case "$1" in
+    eternity)   echo "/Users/mac/eternity" ;;
+    infra)      echo "/Users/mac/infra" ;;
+    dad)        echo "/Users/mac/dad" ;;
+    s45)        echo "/Users/mac/Desktop/S45" ;;
+    deluna-crm) echo "/Users/mac/Desktop/deluna-crm" ;;
+    deluna-mini) echo "/Users/mac/deluna-mini" ;;
+    *)          echo "" ;;
+  esac
+}
+
+project_list() {
+  echo "eternity infra dad s45 deluna-crm deluna-mini"
+}
 
 # ── Ollama model (persisted) ────────────────────────────
 DAD_MODEL_FILE="$HOME/.dad-model"
@@ -66,8 +68,9 @@ show_help() {
   echo -e "  ${CYAN}clean${NC}              Cleanup across all machines"
   echo ""
   echo -e "${BOLD}Projects:${NC}"
-  for name in $(echo "${!PROJECTS[@]}" | tr ' ' '\n' | sort); do
-    echo -e "  ${GREEN}${name}${NC}  →  ${PROJECTS[$name]}"
+  for name in $(project_list); do
+    dir=$(project_path "$name")
+    echo -e "  ${GREEN}${name}${NC}  →  ${dir}"
   done
   echo ""
   echo -e "${DIM}Current model: $(get_model)${NC}"
@@ -79,19 +82,18 @@ cmd_open() {
   if [[ -z "$project" ]]; then
     echo -e "${RED}Error: specify a project${NC}"
     echo "Usage: dad open <project>"
-    echo "Available: $(echo "${!PROJECTS[@]}" | tr ' ' '\n' | sort | tr '\n' ' ')"
+    echo "Available: $(project_list)"
     return 1
   fi
 
-  local dir="${PROJECTS[$project]:-}"
+  local dir=$(project_path "$project")
   if [[ -z "$dir" ]]; then
-    # Check if it's a path
     if [[ -d "$project" ]]; then
       dir="$project"
       project="$(basename "$dir")"
     else
       echo -e "${RED}Unknown project: $project${NC}"
-      echo "Available: $(echo "${!PROJECTS[@]}" | tr ' ' '\n' | sort | tr '\n' ' ')"
+      echo "Available: $(project_list)"
       return 1
     fi
   fi
@@ -141,7 +143,6 @@ cmd_close() {
 cmd_done() {
   local project="${1:-}"
   if [[ -z "$project" ]]; then
-    # Try to detect from tmux
     project="$(tmux display-message -p '#S' 2>/dev/null || echo '')"
   fi
 
@@ -151,7 +152,7 @@ cmd_done() {
     return 1
   fi
 
-  local dir="${PROJECTS[$project]:-}"
+  local dir=$(project_path "$project")
   local retro_dir="${dir}/ψ/memory/retros"
   local today=$(date +%Y-%m-%d)
   local retro_file="${retro_dir}/${today}_session.md"
@@ -166,14 +167,7 @@ cmd_done() {
   echo -e "${GREEN}✦ Session summary for ${BLUE}${project}${NC}"
   echo -e "${DIM}  Model: $(get_model)${NC}"
   echo -e "${DIM}  Date: $(date)${NC}"
-  echo ""
-  echo -e "${BOLD}What was accomplished?${NC}"
-  # If Ollama is available, use it to summarize
-  if command -v ollama &>/dev/null && ollama list &>/dev/null 2>&1; then
-    echo -e "${DIM}  (Use 'dad done <project>' after your session to create a retrospective)${NC}"
-  fi
 
-  # Create retro template
   cat > "$retro_file" <<EOF
 # Session Retrospective — $project
 
@@ -197,13 +191,14 @@ cmd_done() {
 -
 EOF
 
+  echo ""
   echo -e "${GREEN}✦ Retrospective template saved to:${NC}"
   echo -e "  ${retro_file}"
   echo ""
   echo -e "${DIM}Fill in the retrospective, then commit and push.${NC}"
 }
 
-# ── Command: model ───────────────────────────────────────
+# ── Command: model ────────────────────────────────────────
 cmd_model() {
   local model="$1"
   if [[ -z "$model" ]]; then
@@ -223,7 +218,7 @@ cmd_model() {
     sleep 2
   fi
 
-  # Check if model exists
+  # Check if model exists locally
   if ! ollama list 2>/dev/null | grep -q "$model"; then
     echo -e "${YELLOW}Model '$model' not found locally. Pulling...${NC}"
     ollama pull "$model"
@@ -248,29 +243,32 @@ cmd_models() {
 
   echo -e "${BOLD}Available Ollama Models:${NC}"
   echo ""
-  ollama list 2>/dev/null | tail -n +1 | while read -r name size _; do
-    if [[ "$name" == "$(get_model)" ]]; then
+  local current=$(get_model)
+  ollama list 2>/dev/null | tail -n +2 | while IFS= read -r line; do
+    name=$(echo "$line" | awk '{print $1}')
+    size=$(echo "$line" | awk '{print $2, $3}')
+    if [[ "$name" == "$current" ]]; then
       echo -e "  ${GREEN}* ${name}${NC}  ${DIM}(${size})${NC}"
     else
       echo -e "    ${name}  ${DIM}(${size})${NC}"
     fi
   done
   echo ""
-  echo -e "${DIM}Current: $(get_model)${NC}"
+  echo -e "${DIM}Current: ${current}${NC}"
   echo -e "${DIM}Switch: dad model <name>${NC}"
   echo -e "${DIM}Pull new: ollama pull <name>${NC}"
 }
 
-# ── Command: status ───────────────────────────────────────
+# ── Command: status ──────────────────────────────────────
 cmd_status() {
   echo -e "${BOLD}DAD — Dev Automation Daemon${NC}"
   echo -e "${DIM}Model: $(get_model)${NC}"
   echo ""
   echo -e "${BOLD}Projects:${NC}"
-  for name in $(echo "${!PROJECTS[@]}" | tr ' ' '\n' | sort); do
-    local dir="${PROJECTS[$name]}"
-    local git_branch=""
+  for name in $(project_list); do
+    local dir=$(project_path "$name")
     local tmux_status=""
+    local git_branch=""
 
     # Check tmux
     if tmux has-session -t "$name" 2>/dev/null; then
@@ -318,10 +316,10 @@ cmd_family() {
   echo -e "  ${DIM}Registry: https://github.com/doctorboyz/eternity/issues/3${NC}"
 }
 
-# ── Command: tell ────────────────────────────────────────
+# ── Command: tell ─────────────────────────────────────────
 cmd_tell() {
   local project="$1"
-  shift
+  shift || true
   local message="$*"
 
   if [[ -z "$project" || -z "$message" ]]; then
@@ -329,7 +327,7 @@ cmd_tell() {
     return 1
   fi
 
-  local dir="${PROJECTS[$project]:-}"
+  local dir=$(project_path "$project")
   if [[ -z "$dir" || ! -d "$dir" ]]; then
     echo -e "${RED}Unknown project: $project${NC}"
     return 1
@@ -346,12 +344,16 @@ cmd_tell() {
   echo -e "${DIM}  Saved to: ${tell_file}${NC}"
 }
 
-# ── Command: health ───────────────────────────────────────
+# ── Command: health ────────────────────────────────────────
 cmd_health() {
   echo -e "${BOLD}DAD Health Check${NC}"
   echo ""
   echo -e "${CYAN}macbook (local)${NC}"
-  bash ~/infra/scripts/health-check.sh 2>/dev/null || echo -e "  ${DIM}health-check.sh not found${NC}"
+  if [[ -f "$HOME/infra/scripts/health-check.sh" ]]; then
+    bash "$HOME/infra/scripts/health-check.sh"
+  else
+    echo -e "  ${DIM}infra health-check.sh not found${NC}"
+  fi
   echo ""
   echo -e "${CYAN}macmini${NC}"
   if ssh -o ConnectTimeout=3 macmini "echo ok" &>/dev/null; then
@@ -373,20 +375,10 @@ cmd_clean() {
   echo -e "${BOLD}DAD Cleanup${NC}"
   echo ""
   echo -e "${CYAN}macbook (local)${NC}"
-  bash ~/infra/scripts/cleanup.sh "$@"
-  echo ""
-  echo -e "${CYAN}macmini${NC}"
-  if ssh -o ConnectTimeout=3 macmini "echo ok" &>/dev/null; then
-    echo -e "  ${DIM}Remote cleanup not yet automated${NC}"
+  if [[ -f "$HOME/infra/scripts/cleanup.sh" ]]; then
+    bash "$HOME/infra/scripts/cleanup.sh" "$@"
   else
-    echo -e "  ${DIM}○ offline${NC}"
-  fi
-  echo ""
-  echo -e "${CYAN}vpsdeluna${NC}"
-  if ssh -o ConnectTimeout=3 vpsdeluna "echo ok" &>/dev/null; then
-    echo -e "  ${DIM}Remote cleanup not yet automated${NC}"
-  else
-    echo -e "  ${DIM}○ offline${NC}"
+    echo -e "  ${DIM}infra cleanup.sh not found${NC}"
   fi
 }
 
@@ -394,10 +386,10 @@ cmd_clean() {
 cmd_repair() {
   local project="${1:-}"
   if [[ -z "$project" ]]; then
-    project="$(tmux display-message -p '#S' 2>/dev/null || echo '')"
+    project="$(tmux display-message -p '#S' 2>/dev/null || echo 'unknown')"
   fi
   echo -e "${BOLD}DAD Repair${NC}"
-  echo -e "${DIM}Project: ${project:-current}${NC}"
+  echo -e "${DIM}Project: ${project}${NC}"
   echo ""
   echo -e "${YELLOW}Running diagnostics...${NC}"
   echo ""
