@@ -150,6 +150,31 @@ cmd_open() {
   echo -e "${DIM}  Ollama: running${NC}"
   echo ""
 
+  # ── Auto-accept workspace trust for this project ─────
+  # Claude Code stores trust in ~/.claude.json under projects.<path>.hasTrustDialogAccepted
+  local claude_config="$HOME/.claude.json"
+  if [[ -f "$claude_config" ]]; then
+    # Use python3 to set the trust flag for this directory
+    python3 -c "
+import json, sys
+cfg_path = '$claude_config'
+dir_path = '$dir'
+try:
+    with open(cfg_path, 'r') as f:
+        cfg = json.load(f)
+    projects = cfg.get('projects', {})
+    if dir_path not in projects:
+        projects[dir_path] = {}
+    projects[dir_path]['hasTrustDialogAccepted'] = True
+    cfg['projects'] = projects
+    with open(cfg_path, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print('trust: accepted')
+except Exception as e:
+    print(f'trust: skipped ({e})')
+" 2>/dev/null || echo -e "${DIM}  (could not auto-accept trust)${NC}"
+  fi
+
   # ── Create tmux session with 2 panes ─────────────────
   # Pane 0: Claude Code (main, top ~70%)
   # Pane 1: Shell / Ollama (bottom ~30%)
@@ -161,8 +186,7 @@ cmd_open() {
   tmux split-window -v -l 30\% -c "$dir"
 
   # ── Launch Claude in pane 0 (top, main) ──────────────
-  # -- separates Claude flags from dangerous permissions flag
-  tmux send-keys -t "$project:0.0" "claude --model ${model} -- --dangerously-skip-permissions" Enter
+  tmux send-keys -t "$project:0.0" "claude --model ${model} --dangerously-skip-permissions" Enter
 
   # ── Pane 1 (bottom): status shell ────────────────────
   tmux send-keys -t "$project:0.1" "clear" Enter
