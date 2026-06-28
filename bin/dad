@@ -39,11 +39,35 @@ get_model() {
   if [[ -f "$DAD_MODEL_FILE" ]]; then
     cat "$DAD_MODEL_FILE"
   else
-    echo "llama3"
+    echo "glm_5.2:cloud"
   fi
 }
 set_model() {
   echo "$1" > "$DAD_MODEL_FILE"
+}
+
+# ── Start Ollama if not running ────────────────────────
+start_ollama() {
+  if ! command -v ollama &>/dev/null; then
+    echo -e "${YELLOW}⚠  Ollama not installed. Run: brew install ollama${NC}"
+    return 1
+  fi
+  # Check if ollama server is running
+  if ! ollama list &>/dev/null 2>&1; then
+    echo -e "${YELLOW}✦ Starting Ollama...${NC}"
+    ollama serve &>/dev/null &
+    # Wait for it to be ready
+    for i in $(seq 1 10); do
+      sleep 1
+      if ollama list &>/dev/null 2>&1; then
+        echo -e "${GREEN}✦ Ollama ready${NC}"
+        return 0
+      fi
+    done
+    echo -e "${RED}⚠  Ollama failed to start${NC}"
+    return 1
+  fi
+  return 0
 }
 
 # ── Help ─────────────────────────────────────────────────
@@ -55,7 +79,7 @@ show_help() {
   echo -e "  dad <command> [args]"
   echo ""
   echo -e "${BOLD}Commands:${NC}"
-  echo -e "  ${CYAN}open${NC} <project>      Open project in tmux session"
+  echo -e "  ${CYAN}open${NC} <project>      Open project: tmux + Ollama + Claude --dangerously-skip-permissions"
   echo -e "  ${CYAN}close${NC} <project>     Close project tmux session"
   echo -e "  ${CYAN}done${NC} [project]      Summarize session, save retrospective"
   echo -e "  ${CYAN}repair${NC} [project]    Diagnose and fix issues"
@@ -74,6 +98,7 @@ show_help() {
   done
   echo ""
   echo -e "${DIM}Current model: $(get_model)${NC}"
+  echo -e "${DIM}Default: glm_5.2:cloud | Switch: dad model <name>${NC}"
 }
 
 # ── Command: open ────────────────────────────────────────
@@ -103,6 +128,11 @@ cmd_open() {
     return 1
   fi
 
+  local model=$(get_model)
+
+  # ── Start Ollama ──────────────────────────────────────
+  start_ollama
+
   if tmux has-session -t "$project" 2>/dev/null; then
     echo -e "${GREEN}✦ Attaching to existing session: ${BLUE}${project}${NC}"
     if [[ -n "${TMUX:-}" ]]; then
@@ -110,15 +140,43 @@ cmd_open() {
     else
       tmux attach-session -t "$project"
     fi
+    return 0
+  fi
+
+  echo -e "${GREEN}✦ Waking up: ${BLUE}${project}${NC} → ${dir}"
+  echo -e "${DIM}  Model: ${model}${NC}"
+  echo -e "${DIM}  Ollama: running${NC}"
+  echo ""
+
+  # ── Create tmux session with 2 panes ─────────────────
+  # Pane 0: Claude Code (main)
+  # Pane 1: Ollama / shell (side)
+
+  tmux new-session -d -s "$project" -c "$dir"
+
+  # Split vertically: top = Claude, bottom = shell
+  tmux split-window -v -c "$dir"
+
+  # ── Launch Claude in pane 0 ──────────────────────────
+  # Claude Code with the selected model and dangerous permissions flag
+  tmux send-keys -t "$project:0.0" "claude --model ${model} --dangerously-skip-permissions" Enter
+
+  # ── Pane 1: show ollama status ──────────────────────
+  tmux send-keys -t "$project:0.1" "echo '✦ DAD — Dev Automation Daemon'" Enter
+  tmux send-keys -t "$project:0.1" "echo '✦ Project: ${project}'" Enter
+  tmux send-keys -t "$project:0.1" "echo '✦ Model: ${model}'" Enter
+  tmux send-keys -t "$project:0.1" "echo '✦ Ollama:' && ollama list 2>/dev/null | head -5 || echo '  not running'" Enter
+  tmux send-keys -t "$project:0.1" "echo ''" Enter
+  tmux send-keys -t "$project:0.1" "echo 'Shell ready. Use dad commands or ollama here.'" Enter
+
+  # ── Select pane 0 (Claude) as active ────────────────
+  tmux select-pane -t "$project:0.0"
+
+  # ── Attach ───────────────────────────────────────────
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux switch-client -t "$project"
   else
-    echo -e "${GREEN}✦ Creating session: ${BLUE}${project}${NC} → ${dir}"
-    echo -e "${DIM}  Model: $(get_model)${NC}"
-    if [[ -n "${TMUX:-}" ]]; then
-      tmux new-session -d -s "$project" -c "$dir"
-      tmux switch-client -t "$project"
-    else
-      tmux new-session -s "$project" -c "$dir"
-    fi
+    tmux attach-session -t "$project"
   fi
 }
 
