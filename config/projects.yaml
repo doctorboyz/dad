@@ -1,0 +1,59 @@
+# DAD Project Registry
+# Synced with eternity/inventory/projects.md
+
+projects:
+  eternity:
+    path: /Users/mac/eternity
+    github: doctorboyz/eternity
+    parent: null
+    description: Meta-repository — infrastructure, knowledge, philosophy
+
+  infra:
+    path: /Users/mac/infra
+    github: doctorboyz/infra
+    parent: eternity
+    description: Infrastructure management agent
+
+  dad:
+    path: /Users/mac/dad
+    github: doctorboyz/dad
+    parent: eternity
+    description: Dev Automation Daemon — orchestrates the family
+
+  s45:
+    path: /Users/mac/Desktop/S45
+    github: null  # private
+    parent: null
+    description: Hospital OR pipeline & management system
+
+  deluna-crm:
+    path: /Users/mac/Desktop/deluna-crm
+    github: dlcitdev/deluna-crm
+    parent: null
+    description: Clinic management system (full)
+
+  deluna-mini:
+    path: /Users/mac/deluna-mini
+    github: dlcitdev/deluna-mini
+    parent: deluna-crm
+    description: Lightweight clinic management (Next.js)
+
+# Default Ollama model
+default_model: llama3
+
+# Tailscale machines
+machines:
+  macbook:
+    ip: 100.103.150.42
+    user: mac
+    role: primary
+
+  macmini:
+    ip: 100.121.113.38
+    user: doctorboyz
+    role: secondary
+
+  vpsdeluna:
+    ip: 100.68.106.101
+    user: root
+    role: production
