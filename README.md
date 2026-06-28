@@ -25,8 +25,8 @@
 # Clone and link
 git clone https://github.com/doctorboyz/dad.git ~/dad
 cd ~/dad
-chmod +x bin/dad.sh
-ln -sf ~/dad/bin/dad.sh /usr/local/bin/dad
+chmod +x bin/dad
+ln -sf ~/dad/bin/dad ~/.local/bin/dad   # ~/.local/bin is on PATH on this machine
 
 # Or add to PATH
 export PATH="$HOME/dad/bin:$PATH"

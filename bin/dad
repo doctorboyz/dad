@@ -35,11 +35,13 @@ project_list() {
 
 # ── Ollama model (persisted) ────────────────────────────
 DAD_MODEL_FILE="$HOME/.dad-model"
+# Default must match the actual Ollama model name exactly (hyphen, not underscore).
+DAD_DEFAULT_MODEL="glm-5.2:cloud"
 get_model() {
   if [[ -f "$DAD_MODEL_FILE" ]]; then
     cat "$DAD_MODEL_FILE"
   else
-    echo "glm_5.2:cloud"
+    echo "$DAD_DEFAULT_MODEL"
   fi
 }
 set_model() {
@@ -80,6 +82,7 @@ show_help() {
   echo ""
   echo -e "${BOLD}Commands:${NC}"
   echo -e "  ${CYAN}open${NC} <project>      Open project: tmux + Ollama + Claude (re-attaches if running)"
+  echo -e "  ${CYAN}open${NC} <p> --continue Resume the project's most recent Claude conversation"
   echo -e "  ${CYAN}close${NC} <project>     Close project tmux session"
   echo -e "  ${CYAN}done${NC} [project]      Summarize session, save retrospective"
   echo -e "  ${CYAN}repair${NC} [project]    Diagnose and fix issues"
@@ -98,15 +101,28 @@ show_help() {
   done
   echo ""
   echo -e "${DIM}Current model: $(get_model)${NC}"
-  echo -e "${DIM}Default: glm_5.2:cloud | Switch: dad model <name>${NC}"
+  echo -e "${DIM}Default: ${DAD_DEFAULT_MODEL} | Switch: dad model <name>${NC}"
 }
 
 # ── Command: open ────────────────────────────────────────
 cmd_open() {
-  local project="$1"
+  local project=""
+  local continue_flag=0
+
+  # Parse args: project name + optional --continue / -c flag (any order)
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --continue|-c) continue_flag=1; shift ;;
+      --) shift; break ;;
+      -*) echo -e "${RED}Unknown option: $1${NC}"; echo "Usage: dad open <project> [--continue]"; return 1 ;;
+      *) if [[ -z "$project" ]]; then project="$1"; else echo -e "${RED}Unexpected argument: $1${NC}"; return 1; fi; shift ;;
+    esac
+  done
+
   if [[ -z "$project" ]]; then
     echo -e "${RED}Error: specify a project${NC}"
-    echo "Usage: dad open <project>"
+    echo "Usage: dad open <project> [--continue]"
+    echo "  --continue  resume the project's most recent Claude conversation"
     echo "Available: $(project_list)"
     return 1
   fi
@@ -175,33 +191,22 @@ except Exception as e:
 " 2>/dev/null || echo -e "${DIM}  (could not auto-accept trust)${NC}"
   fi
 
-  # ── Create tmux session with 2 panes ─────────────────
-  # Pane 0: Claude Code (main, top ~70%)
-  # Pane 1: Shell / Ollama (bottom ~30%)
-
+  # ── Create tmux session with a single Claude pane ────
+  # One pane only — no status/ollama split. The whole session is Claude.
   tmux new-session -d -s "$project" -c "$dir"
 
-  # Split horizontally: main top, small bottom
-  # -l 30% = bottom pane gets 30% of height
-  tmux split-window -v -l 30\% -c "$dir"
+  # Capture the single pane's stable ID (robust against base-index settings).
+  local pane
+  pane=$(tmux list-panes -t "$project" -F '#{pane_id}' | head -1)
 
-  # ── Launch Claude in pane 0 (top, main) ──────────────
-  tmux send-keys -t "$project:0.0" "claude --model ${model} --dangerously-skip-permissions" Enter
-
-  # ── Pane 1 (bottom): status shell ────────────────────
-  tmux send-keys -t "$project:0.1" "clear" Enter
-  tmux send-keys -t "$project:0.1" "echo '╔══════════════════════════════════════════════╗'" Enter
-  tmux send-keys -t "$project:0.1" "echo '║  DAD — Dev Automation Daemon                 ║'" Enter
-  tmux send-keys -t "$project:0.1" "echo '║  Project: ${project}'" Enter
-  tmux send-keys -t "$project:0.1" "echo '║  Model: ${model}'" Enter
-  tmux send-keys -t "$project:0.1" "echo '╚══════════════════════════════════════════════╝'" Enter
-  tmux send-keys -t "$project:0.1" "echo ''" Enter
-  tmux send-keys -t "$project:0.1" "ollama list 2>/dev/null || echo 'Ollama not running'" Enter
-  tmux send-keys -t "$project:0.1" "echo ''" Enter
-  tmux send-keys -t "$project:0.1" "echo 'Shell ready. dad <command> or ollama <command>.'" Enter
-
-  # ── Select pane 0 (Claude) as active ────────────────
-  tmux select-pane -t "$project:0.0"
+  # ── Launch Claude in the pane ────────────────────────
+  # --continue resumes the project's most recent conversation; without it, fresh.
+  local claude_cmd="claude --model ${model} --dangerously-skip-permissions"
+  if [[ "$continue_flag" -eq 1 ]]; then
+    claude_cmd="claude --model ${model} --continue --dangerously-skip-permissions"
+    echo -e "${DIM}  Resume: --continue (most recent conversation)${NC}"
+  fi
+  tmux send-keys -t "$pane" "$claude_cmd" Enter
 
   # ── Attach ───────────────────────────────────────────
   if [[ -n "${TMUX:-}" ]]; then
