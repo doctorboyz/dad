@@ -38,6 +38,18 @@ projects:
     parent: deluna-crm
     description: Lightweight clinic management (Next.js)
 
+  plaud:
+    path: /Users/mac/plaud
+    github: doctorboyz/plaud
+    parent: eternity
+    description: Collects and analyzes text transcripts from the Plaud note recorder (MCP server wrapping the plaud CLI)
+
+  silicon:
+    path: /Users/mac/Desktop/silicon
+    github: doctorboyz/silicon
+    parent: eternity
+    description: Harness for Apple Foundation Models — private on-device AI workflows (fm CLI); candidate alternative to Ollama for local model tasks (AFM 3 Core, on-device, no quota)
+
 # Default Ollama model
 default_model: llama3
 
