@@ -16,27 +16,23 @@ NC='\033[0m'
 # ── Paths ────────────────────────────────────────────────
 DAD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# ── Project registry (bash 3.2 compatible — case/esac) ───
+# ── Project registry (single source of truth: config/projects.yaml) ───
+# bash 3.2 compatible: no associative arrays; ruby (ships with macOS) parses YAML.
+# Never hardcode projects here — add them to config/projects.yaml only.
 project_path() {
-  case "$1" in
-    eternity)   echo "/Users/mac/eternity" ;;
-    infra)      echo "/Users/mac/infra" ;;
-    dad)        echo "/Users/mac/dad" ;;
-    s45)        echo "/Users/mac/Desktop/S45" ;;
-    deluna-crm) echo "/Users/mac/Desktop/deluna-crm" ;;
-    deluna-mini) echo "/Users/mac/deluna-mini" ;;
-    *)          echo "" ;;
-  esac
+  ruby -ryaml -e 'cfg = YAML.load_file(ARGV[0]); proj = cfg["projects"][ARGV[1]]; puts proj ? proj["path"] : ""' \
+    "$DAD_DIR/config/projects.yaml" "$1" 2>/dev/null
 }
 
 project_list() {
-  echo "eternity infra dad s45 deluna-crm deluna-mini"
+  ruby -ryaml -e 'puts YAML.load_file(ARGV[0])["projects"].keys.join(" ")' \
+    "$DAD_DIR/config/projects.yaml" 2>/dev/null
 }
 
 # ── Ollama model (persisted) ────────────────────────────
 DAD_MODEL_FILE="$HOME/.dad-model"
 # Default must match the actual Ollama model name exactly (hyphen, not underscore).
-DAD_DEFAULT_MODEL="glm-5.2:cloud"
+DAD_DEFAULT_MODEL="glm-5.3:cloud"
 get_model() {
   if [[ -f "$DAD_MODEL_FILE" ]]; then
     cat "$DAD_MODEL_FILE"
@@ -200,12 +196,16 @@ except Exception as e:
   pane=$(tmux list-panes -t "$project" -F '#{pane_id}' | head -1)
 
   # ── Launch Claude in the pane ────────────────────────
-  # --continue resumes the project's most recent conversation; without it, fresh.
-  local claude_cmd="claude --model ${model} --dangerously-skip-permissions"
+  # Claude is always launched through Ollama: `ollama launch claude --model <m> -- <claude flags>`.
+  # The `--` separates Ollama's args from Claude's. --dangerously-skip-permissions is a
+  # Claude flag, so it belongs after the `--`. --continue resumes the most recent
+  # conversation; without it, fresh. Never call plain `claude` directly.
+  local claude_flags="--dangerously-skip-permissions"
   if [[ "$continue_flag" -eq 1 ]]; then
-    claude_cmd="claude --model ${model} --continue --dangerously-skip-permissions"
+    claude_flags="--continue --dangerously-skip-permissions"
     echo -e "${DIM}  Resume: --continue (most recent conversation)${NC}"
   fi
+  local claude_cmd="ollama launch claude --model ${model} -- ${claude_flags}"
   tmux send-keys -t "$pane" "$claude_cmd" Enter
 
   # ── Attach ───────────────────────────────────────────
@@ -403,9 +403,32 @@ cmd_status() {
 cmd_family() {
   echo -e "${BOLD}Eternity Family${NC}"
   echo ""
-  echo -e "  ${GREEN}eternity${NC} ${DIM}(root ancestor)${NC}"
-  echo -e "  ├── ${CYAN}infra${NC} ${DIM}(infrastructure management)${NC}"
-  echo -e "  └── ${CYAN}dad${NC} ${DIM}(dev automation daemon)${NC}"
+  # Tree is generated from config/projects.yaml — no hardcoded lineage.
+  ruby -ryaml -e '
+    cfg = YAML.load_file(ARGV[0])["projects"]
+    short = lambda do |name|
+      d = (cfg[name] || {})["description"].to_s
+      d = d.split(/ — |\(/).first.to_s.strip
+      d.length > 45 ? d[0, 44] + "…" : d
+    end
+    kids = lambda { |parent| cfg.select { |_, p| p["parent"] == parent }.keys }
+    tree = lambda do |parent, prefix|
+      children = kids.call(parent)
+      children.each_with_index do |name, i|
+        last = (i == children.size - 1)
+        puts "#{prefix}#{last ? "└── " : "├── "}#{name} (#{short.call(name)})"
+        tree.call(name, prefix + (last ? "    " : "│   "))
+      end
+    end
+    puts "  eternity (root ancestor)"
+    tree.call("eternity", "  ")
+    standalone = cfg.reject { |n, _| n == "eternity" || _["parent"] }.keys
+    unless standalone.empty?
+      puts ""
+      puts "  standalone:"
+      standalone.each { |n| puts "    · #{n} (#{short.call(n)})" }
+    end
+  ' "$DAD_DIR/config/projects.yaml" 2>/dev/null
   echo ""
   echo -e "  ${DIM}Registry: https://github.com/doctorboyz/eternity/issues/3${NC}"
 }
@@ -515,5 +538,5 @@ case "$COMMAND" in
   clean)  cmd_clean "$@" ;;
   -h|--help|help) show_help ;;
   "")     show_help ;;
-  *)      echo -e "${RED}Unknown command: $COMMAND${NC}"; show_help; return 1 ;;
+  *)      echo -e "${RED}Unknown command: $COMMAND${NC}"; show_help; exit 1 ;;
 esac
